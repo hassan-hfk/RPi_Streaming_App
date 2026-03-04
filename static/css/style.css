@@ -1,0 +1,495 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --primary-color: #2563eb;
+    --secondary-color: #10b981;
+    --danger-color: #ef4444;
+    --warning-color: #f59e0b;
+    --overlay-bg: rgba(15, 23, 42, 0.75);
+    --overlay-light: rgba(30, 41, 59, 0.85);
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --border-color: rgba(51, 65, 85, 0.5);
+}
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    overflow: hidden;
+    width: 100vw;
+    height: 100vh;
+    position: relative;
+}
+
+/* Full-Screen Video Background */
+.video-fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
+    background: #000;
+}
+
+.video-fullscreen img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* Top Status Bar */
+.top-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 20px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.7) 0%, transparent 100%);
+    z-index: 100;
+}
+
+.status-info,
+.system-info {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.status-badge,
+.info-badge {
+    padding: 6px 12px;
+    background: var(--overlay-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 20px;
+    color: var(--text-primary);
+    font-size: 0.85em;
+    font-weight: 500;
+    backdrop-filter: blur(10px);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.status-dot {
+    width: 8px;
+    height: 8px;
+    background: var(--secondary-color);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* Top-Right: Servo Controls */
+.servo-overlay {
+    position: fixed;
+    top: 80px;
+    right: 20px;
+    width: 200px;
+    background: var(--overlay-light);
+    border: 1px solid var(--border-color);
+    border-radius: 15px;
+    padding: 15px;
+    z-index: 100;
+    backdrop-filter: blur(10px);
+}
+
+.servo-header-compact {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.servo-reset-compact {
+    background: var(--warning-color);
+    border: none;
+    border-radius: 6px;
+    padding: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.servo-reset-compact svg {
+    width: 16px;
+    height: 16px;
+    stroke: white;
+}
+
+.servo-reset-compact:hover {
+    background: #d97706;
+    transform: scale(1.1);
+}
+
+.servo-compact {
+    margin-bottom: 12px;
+}
+
+.servo-compact-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+    color: var(--text-primary);
+    font-size: 0.9em;
+}
+
+.servo-angle {
+    color: var(--secondary-color);
+    font-weight: 700;
+    font-size: 0.95em;
+}
+
+.servo-slider-compact {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    background: rgba(51, 65, 85, 0.6);
+    border-radius: 3px;
+    outline: none;
+    margin-bottom: 4px;
+}
+
+.servo-slider-compact::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.6);
+}
+
+.servo-slider-compact::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(37, 99, 235, 0.6);
+}
+
+.servo-limits {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7em;
+    color: var(--text-secondary);
+}
+
+/* Bottom-Left: Movement Controls (D-Pad Style) */
+.movement-controls {
+    position: fixed;
+    bottom: 30px;
+    left: 30px;
+    z-index: 100;
+}
+
+.dpad {
+    display: grid;
+    grid-template-columns: 60px 60px 60px;
+    grid-template-rows: 60px 60px 60px;
+    gap: 5px;
+}
+
+.dpad-up {
+    grid-column: 2;
+    grid-row: 1;
+}
+
+.dpad-middle {
+    grid-column: 1 / 4;
+    grid-row: 2;
+    display: flex;
+    gap: 5px;
+}
+
+.dpad-down {
+    grid-column: 2;
+    grid-row: 3;
+}
+
+.dpad-btn {
+    width: 60px;
+    height: 60px;
+    background: var(--overlay-light);
+    border: 2px solid var(--border-color);
+    border-radius: 10px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    backdrop-filter: blur(10px);
+}
+
+.dpad-btn svg {
+    width: 28px;
+    height: 28px;
+    fill: var(--text-primary);
+    opacity: 0.9;
+}
+
+.dpad-btn:hover {
+    background: rgba(37, 99, 235, 0.7);
+    border-color: var(--primary-color);
+    transform: scale(1.05);
+}
+
+.dpad-btn:active,
+.dpad-btn.active {
+    background: var(--secondary-color);
+    border-color: var(--secondary-color);
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.6);
+}
+
+.dpad-center {
+    background: rgba(239, 68, 68, 0.7) !important;
+    border-color: var(--danger-color);
+}
+
+.dpad-center:hover {
+    background: rgba(239, 68, 68, 0.85) !important;
+}
+
+.dpad-center.active {
+    background: var(--danger-color) !important;
+}
+
+.control-label {
+    text-align: center;
+    margin-top: 10px;
+    color: var(--text-primary);
+    font-size: 0.85em;
+    font-weight: 600;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+}
+
+/* Bottom-Right: Joystick */
+.joystick-overlay {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    z-index: 100;
+}
+
+.joystick-area-compact {
+    position: relative;
+    width: 140px;
+    height: 140px;
+    background: var(--overlay-light);
+    border: 2px solid var(--border-color);
+    border-radius: 50%;
+    box-shadow: inset 0 4px 8px rgba(0, 0, 0, 0.3);
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+}
+
+.joystick-center-compact {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 8px;
+    height: 8px;
+    background: var(--text-secondary);
+    border-radius: 50%;
+    opacity: 0.4;
+}
+
+.joystick-stick-compact {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 50px;
+    height: 50px;
+    background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+    border-radius: 50%;
+    box-shadow: 0 4px 12px rgba(37, 99, 235, 0.6);
+    transition: all 0.1s ease;
+    cursor: grab;
+}
+
+.joystick-stick-compact:active {
+    cursor: grabbing;
+}
+
+.joystick-coords {
+    display: flex;
+    justify-content: space-around;
+    margin-top: 8px;
+    padding: 6px 12px;
+    background: var(--overlay-bg);
+    border: 1px solid var(--border-color);
+    border-radius: 15px;
+    color: var(--text-secondary);
+    font-size: 0.8em;
+    backdrop-filter: blur(10px);
+}
+
+.joystick-coords strong {
+    color: var(--primary-color);
+    margin-left: 4px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .top-bar {
+        padding: 10px 15px;
+    }
+    
+    .status-badge,
+    .info-badge {
+        font-size: 0.75em;
+        padding: 4px 8px;
+    }
+    
+    .servo-overlay {
+        width: 160px;
+        right: 10px;
+        top: 60px;
+        padding: 12px;
+    }
+    
+    .movement-controls {
+        bottom: 20px;
+        left: 20px;
+    }
+    
+    .dpad {
+        grid-template-columns: 50px 50px 50px;
+        grid-template-rows: 50px 50px 50px;
+        gap: 4px;
+    }
+    
+    .dpad-btn {
+        width: 50px;
+        height: 50px;
+    }
+    
+    .dpad-btn svg {
+        width: 24px;
+        height: 24px;
+    }
+    
+    .joystick-overlay {
+        bottom: 20px;
+        right: 20px;
+    }
+    
+    .joystick-area-compact {
+        width: 120px;
+        height: 120px;
+    }
+    
+    .joystick-stick-compact {
+        width: 40px;
+        height: 40px;
+    }
+}
+
+@media (max-width: 480px) {
+    .system-info {
+        display: none;
+    }
+    
+    .servo-overlay {
+        width: 140px;
+        padding: 10px;
+    }
+    
+    .servo-compact-header {
+        font-size: 0.8em;
+    }
+    
+    .dpad {
+        grid-template-columns: 45px 45px 45px;
+        grid-template-rows: 45px 45px 45px;
+    }
+    
+    .dpad-btn {
+        width: 45px;
+        height: 45px;
+    }
+}
+
+/* Landscape mode adjustments */
+@media (max-height: 500px) and (orientation: landscape) {
+    .top-bar {
+        padding: 8px 15px;
+    }
+    
+    .servo-overlay {
+        top: 50px;
+        width: 150px;
+        padding: 10px;
+    }
+    
+    .movement-controls,
+    .joystick-overlay {
+        bottom: 15px;
+    }
+    
+    .dpad {
+        grid-template-columns: 45px 45px 45px;
+        grid-template-rows: 45px 45px 45px;
+    }
+    
+    .dpad-btn {
+        width: 45px;
+        height: 45px;
+    }
+    
+    .joystick-area-compact {
+        width: 100px;
+        height: 100px;
+    }
+}
+
+.video-fullscreen video,
+.video-fullscreen img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* WebRTC Status Indicators */
+.webrtc-status {
+    font-size: 0.85em;
+    transition: all 0.3s ease;
+}
+
+.status-new,
+.status-connecting {
+    color: #fbbf24 !important;
+}
+
+.status-connected,
+.status-streaming {
+    color: var(--secondary-color) !important;
+}
+
+.status-disconnected,
+.status-failed {
+    color: var(--danger-color) !important;
+}
