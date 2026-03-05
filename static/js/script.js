@@ -1,96 +1,164 @@
-const socket = io();
+// ── Two separate connections ─────────────────────────────────────────────────
+// 1. Raw WebSocket  → /stream  (binary JPEG frames, zero overhead)
+// 2. SocketIO       → /        (control commands only)
 
-// Global variables
+const socket = io();   // SocketIO for controls
+
+// Raw WebSocket for video — connects to /stream which nginx proxies to stream_relay.py
+const streamWs = new WebSocket(`ws://${location.host}/stream`);
+streamWs.binaryType = 'blob';   // receive binary JPEG blobs directly
+
+// ── Global state ─────────────────────────────────────────────────────────────
 let isJoystickActive = false;
 let joystickPosition = { x: 0, y: 0 };
-let currentCommand = 'stop';
+let currentCommand   = 'stop';
 
-// DOM Elements
-const controlButtons = document.querySelectorAll('.dpad-btn');
-const joystickArea = document.getElementById('joystick-area');
-const joystickStick = document.getElementById('joystick-stick');
-const joystickX = document.getElementById('joystick-x');
-const joystickY = document.getElementById('joystick-y');
-const connectionStatus = document.getElementById('connection-status');
-const directionStatus = document.getElementById('direction-status');
-const controlMode = document.getElementById('control-mode');
+// Frame rendering: single-slot buffer — only the latest frame ever gets painted
+let pendingBlob  = null;
+let rafScheduled = false;
+let currentObjectURL = null;   // track current blob URL to revoke it
 
-// Socket.IO event handlers
-socket.on('connect', () => {
-    console.log('Connected to server');
-    const statusText = connectionStatus.querySelector('.status-dot') ?
-        connectionStatus.childNodes[2] : connectionStatus;
-    if (statusText.nodeType === Node.TEXT_NODE) {
-        statusText.textContent = ' Connected';
+// FPS counter
+let frameCount = 0;
+let fpsTimer   = Date.now();
+
+// ── DOM refs ──────────────────────────────────────────────────────────────────
+const videoImg         = document.getElementById('video-stream');
+const noSignal         = document.getElementById('no-signal');
+const cameraBadge      = document.getElementById('camera-badge');
+const fpsBadge         = document.getElementById('fps-badge');
+const fpsDisplay       = document.getElementById('fps-display');
+const controlButtons   = document.querySelectorAll('.dpad-btn');
+const joystickArea     = document.getElementById('joystick-area');
+const joystickStick    = document.getElementById('joystick-stick');
+const joystickX        = document.getElementById('joystick-x');
+const joystickY        = document.getElementById('joystick-y');
+const directionStatus  = document.getElementById('direction-status');
+const controlMode      = document.getElementById('control-mode');
+
+// ── Raw WebSocket video ───────────────────────────────────────────────────────
+
+streamWs.addEventListener('open', () => {
+    console.log('[Stream] WebSocket connected');
+    streamWs.send('VIEWER');   // register as viewer with relay
+});
+
+streamWs.addEventListener('close', () => {
+    console.log('[Stream] WebSocket closed');
+    setCameraStatus(false);
+});
+
+streamWs.addEventListener('error', (e) => {
+    console.error('[Stream] WebSocket error', e);
+});
+
+streamWs.addEventListener('message', (event) => {
+    // event.data is either a Blob (JPEG frame) or a string (status message)
+    if (typeof event.data === 'string') {
+        // Status messages from relay: 'STATUS:CONNECTED' / 'STATUS:DISCONNECTED'
+        if (event.data === 'STATUS:CONNECTED')    setCameraStatus(true);
+        if (event.data === 'STATUS:DISCONNECTED') setCameraStatus(false);
+        return;
     }
+
+    // It's a binary JPEG blob — store as pending, schedule paint
+    // If a previous frame is already pending, it gets replaced (dropped).
+    // This is intentional: we always show the NEWEST frame, never queue up stale ones.
+    pendingBlob = event.data;
+
+    if (!rafScheduled) {
+        rafScheduled = true;
+        requestAnimationFrame(paintFrame);
+    }
+
+    // FPS counter
+    frameCount++;
+    const now = Date.now();
+    if (now - fpsTimer >= 1000) {
+        fpsDisplay.textContent = frameCount;
+        frameCount = 0;
+        fpsTimer = now;
+    }
+});
+
+function paintFrame() {
+    rafScheduled = false;
+    if (!pendingBlob) return;
+
+    const blob = pendingBlob;
+    pendingBlob = null;
+
+    // Revoke previous object URL to free memory immediately
+    if (currentObjectURL) {
+        URL.revokeObjectURL(currentObjectURL);
+    }
+
+    // Create a blob URL and assign it — browser decodes JPEG natively,
+    // no base64 string processing, no JSON parsing
+    currentObjectURL = URL.createObjectURL(blob);
+    videoImg.src = currentObjectURL;
+
+    noSignal.style.display  = 'none';
+    videoImg.style.display  = 'block';
+}
+
+function setCameraStatus(connected) {
+    if (connected) {
+        cameraBadge.textContent = '📷 Camera Live';
+        cameraBadge.style.color = '#10b981';
+        fpsBadge.style.display  = '';
+    } else {
+        cameraBadge.textContent = '📷 No Camera';
+        cameraBadge.style.color = '#ef4444';
+        fpsBadge.style.display  = 'none';
+        noSignal.style.display  = 'flex';
+        videoImg.style.display  = 'none';
+    }
+}
+
+// ── SocketIO control channel ──────────────────────────────────────────────────
+
+socket.on('connect', () => {
+    console.log('[Control] SocketIO connected');
+    socket.emit('register_viewer');
 });
 
 socket.on('disconnect', () => {
-    console.log('Disconnected from server');
-    const statusText = connectionStatus.querySelector('.status-dot') ?
-        connectionStatus.childNodes[2] : connectionStatus;
-    if (statusText.nodeType === Node.TEXT_NODE) {
-        statusText.textContent = ' Disconnected';
-    }
+    console.log('[Control] SocketIO disconnected');
 });
 
 socket.on('connection_response', (data) => {
-    console.log('Connection response:', data);
+    console.log('[Control] Server:', data);
 });
 
-socket.on('joystick_response', (data) => {
-    console.log('Joystick response:', data);
-});
+// ── D-Pad controls ────────────────────────────────────────────────────────────
 
-// Button control handlers
 controlButtons.forEach(button => {
-    button.addEventListener('mousedown', () => handleButtonPress(button));
-    button.addEventListener('mouseup', () => handleButtonRelease(button));
+    button.addEventListener('mousedown',  () => handleButtonPress(button));
+    button.addEventListener('mouseup',    () => handleButtonRelease(button));
     button.addEventListener('mouseleave', () => handleButtonRelease(button));
-    
-    // Touch events for mobile
-    button.addEventListener('touchstart', (e) => {
-        e.preventDefault();
-        handleButtonPress(button);
-    });
-    button.addEventListener('touchend', (e) => {
-        e.preventDefault();
-        handleButtonRelease(button);
-    });
+    button.addEventListener('touchstart', (e) => { e.preventDefault(); handleButtonPress(button); });
+    button.addEventListener('touchend',   (e) => { e.preventDefault(); handleButtonRelease(button); });
 });
 
 function handleButtonPress(button) {
     const command = button.dataset.command;
-    
-    // Remove active class from all buttons
-    controlButtons.forEach(btn => btn.classList.remove('active'));
-    
-    // Add active class to pressed button
+    controlButtons.forEach(b => b.classList.remove('active'));
     button.classList.add('active');
-    
-    // Send command to server
     sendCommand(command);
-    
-    // Update status
     directionStatus.textContent = command.toUpperCase();
     controlMode.textContent = 'Button';
     currentCommand = command;
 }
 
 function handleButtonRelease(button) {
-    // Only remove active if it's not the stop button
     if (button.dataset.command !== 'stop') {
         button.classList.remove('active');
-        
-        // Auto-stop when button is released
         if (currentCommand !== 'stop') {
             sendCommand('stop');
             directionStatus.textContent = 'STOP';
-            
-            // Activate stop button
-            const stopBtn = document.getElementById('stop-btn');
-            controlButtons.forEach(btn => btn.classList.remove('active'));
-            stopBtn.classList.add('active');
+            controlButtons.forEach(b => b.classList.remove('active'));
+            document.getElementById('stop-btn').classList.add('active');
             currentCommand = 'stop';
         }
     }
@@ -99,273 +167,125 @@ function handleButtonRelease(button) {
 function sendCommand(command) {
     fetch('/control', {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ command: command })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command })
     })
-    .then(response => response.json())
-    .then(data => {
-        console.log('Command sent:', data);
-    })
-    .catch(error => {
-        console.error('Error sending command:', error);
-    });
+    .then(r => r.json())
+    .then(d => console.log('[Control] Command:', d))
+    .catch(e => console.error('[Control] Error:', e));
 }
 
-// Joystick control handlers
-joystickArea.addEventListener('mousedown', startJoystickControl);
-joystickArea.addEventListener('touchstart', startJoystickControl);
+// ── Joystick ──────────────────────────────────────────────────────────────────
 
+joystickArea.addEventListener('mousedown', startJoystick);
+joystickArea.addEventListener('touchstart', startJoystick);
 document.addEventListener('mousemove', moveJoystick);
-document.addEventListener('touchmove', moveJoystick);
+document.addEventListener('touchmove', moveJoystick, { passive: false });
+document.addEventListener('mouseup', stopJoystick);
+document.addEventListener('touchend', stopJoystick);
 
-document.addEventListener('mouseup', stopJoystickControl);
-document.addEventListener('touchend', stopJoystickControl);
-
-function startJoystickControl(e) {
+function startJoystick(e) {
     e.preventDefault();
     isJoystickActive = true;
     controlMode.textContent = 'Joystick';
-    
-    // Remove active class from all buttons
-    controlButtons.forEach(btn => btn.classList.remove('active'));
+    controlButtons.forEach(b => b.classList.remove('active'));
 }
 
 function moveJoystick(e) {
     if (!isJoystickActive) return;
-    
     e.preventDefault();
-    
-    const rect = joystickArea.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    
-    let clientX, clientY;
-    
-    if (e.type === 'touchmove') {
-        clientX = e.touches[0].clientX;
-        clientY = e.touches[0].clientY;
-    } else {
-        clientX = e.clientX;
-        clientY = e.clientY;
+    const rect    = joystickArea.getBoundingClientRect();
+    const centerX = rect.left + rect.width  / 2;
+    const centerY = rect.top  + rect.height / 2;
+    const clientX = e.type === 'touchmove' ? e.touches[0].clientX : e.clientX;
+    const clientY = e.type === 'touchmove' ? e.touches[0].clientY : e.clientY;
+    let dx = clientX - centerX;
+    let dy = clientY - centerY;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    const max  = rect.width / 2 - 30;
+    if (dist > max) {
+        const a = Math.atan2(dy, dx);
+        dx = Math.cos(a) * max;
+        dy = Math.sin(a) * max;
     }
-    
-    let deltaX = clientX - centerX;
-    let deltaY = clientY - centerY;
-    
-    // Calculate distance from center
-    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
-    const maxDistance = rect.width / 2 - 30; // 30px for stick radius
-    
-    // Limit joystick movement to circular area
-    if (distance > maxDistance) {
-        const angle = Math.atan2(deltaY, deltaX);
-        deltaX = Math.cos(angle) * maxDistance;
-        deltaY = Math.sin(angle) * maxDistance;
-    }
-    
-    // Update joystick stick position
-    joystickStick.style.transform = `translate(calc(-50% + ${deltaX}px), calc(-50% + ${deltaY}px))`;
-    
-    // Calculate normalized values (-100 to 100)
-    const normalizedX = Math.round((deltaX / maxDistance) * 100);
-    const normalizedY = Math.round((deltaY / maxDistance) * -100); // Invert Y for intuitive control
-    
-    // Update display
-    joystickX.textContent = normalizedX;
-    joystickY.textContent = normalizedY;
-    
-    // Update position
-    joystickPosition = { x: normalizedX, y: normalizedY };
-    
-    // Send joystick data via socket
+    joystickStick.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`;
+    const nx = Math.round((dx / max) *  100);
+    const ny = Math.round((dy / max) * -100);
+    joystickX.textContent = nx;
+    joystickY.textContent = ny;
+    joystickPosition = { x: nx, y: ny };
     socket.emit('joystick_move', joystickPosition);
-    
-    // Update direction status based on joystick position
-    updateDirectionFromJoystick(normalizedX, normalizedY);
+    updateDirectionFromJoystick(nx, ny);
 }
 
-function stopJoystickControl(e) {
+function stopJoystick(e) {
     if (!isJoystickActive) return;
-    
     e.preventDefault();
     isJoystickActive = false;
-    
-    // Reset joystick position
     joystickStick.style.transform = 'translate(-50%, -50%)';
     joystickX.textContent = '0';
     joystickY.textContent = '0';
-    
-    // Send stop position
     socket.emit('joystick_move', { x: 0, y: 0 });
-    
-    // Update status
     directionStatus.textContent = 'STOP';
     currentCommand = 'stop';
-    
-    // Activate stop button
-    const stopBtn = document.getElementById('stop-btn');
-    controlButtons.forEach(btn => btn.classList.remove('active'));
-    stopBtn.classList.add('active');
+    controlButtons.forEach(b => b.classList.remove('active'));
+    document.getElementById('stop-btn').classList.add('active');
 }
 
 function updateDirectionFromJoystick(x, y) {
-    const threshold = 20; // Minimum value to register movement
-    
-    if (Math.abs(x) < threshold && Math.abs(y) < threshold) {
-        directionStatus.textContent = 'STOP';
-        return;
-    }
-    
-    // Determine primary direction
-    if (Math.abs(y) > Math.abs(x)) {
-        if (y > threshold) {
-            directionStatus.textContent = 'FORWARD';
-        } else if (y < -threshold) {
-            directionStatus.textContent = 'BACKWARD';
-        }
-    } else {
-        if (x > threshold) {
-            directionStatus.textContent = 'RIGHT';
-        } else if (x < -threshold) {
-            directionStatus.textContent = 'LEFT';
-        }
-    }
+    const t = 20;
+    if (Math.abs(x) < t && Math.abs(y) < t) { directionStatus.textContent = 'STOP'; return; }
+    if (Math.abs(y) >= Math.abs(x))
+        directionStatus.textContent = y > t ? 'FORWARD' : 'BACKWARD';
+    else
+        directionStatus.textContent = x > t ? 'RIGHT' : 'LEFT';
 }
 
-// Keyboard controls (optional enhancement)
+// ── Keyboard ──────────────────────────────────────────────────────────────────
+
+const keyMap = {
+    'w': 'forward-btn',  'arrowup':    'forward-btn',
+    's': 'backward-btn', 'arrowdown':  'backward-btn',
+    'a': 'left-btn',     'arrowleft':  'left-btn',
+    'd': 'right-btn',    'arrowright': 'right-btn',
+};
 document.addEventListener('keydown', (e) => {
-    const key = e.key.toLowerCase();
-    
-    switch(key) {
-        case 'w':
-        case 'arrowup':
-            handleButtonPress(document.getElementById('forward-btn'));
-            break;
-        case 's':
-        case 'arrowdown':
-            handleButtonPress(document.getElementById('backward-btn'));
-            break;
-        case 'a':
-        case 'arrowleft':
-            handleButtonPress(document.getElementById('left-btn'));
-            break;
-        case 'd':
-        case 'arrowright':
-            handleButtonPress(document.getElementById('right-btn'));
-            break;
-        case ' ':
-            e.preventDefault();
-            handleButtonPress(document.getElementById('stop-btn'));
-            break;
-    }
+    const id = keyMap[e.key.toLowerCase()];
+    if (id) handleButtonPress(document.getElementById(id));
+    if (e.key === ' ') { e.preventDefault(); handleButtonPress(document.getElementById('stop-btn')); }
 });
-
 document.addEventListener('keyup', (e) => {
-    const key = e.key.toLowerCase();
-    
-    switch(key) {
-        case 'w':
-        case 'arrowup':
-            handleButtonRelease(document.getElementById('forward-btn'));
-            break;
-        case 's':
-        case 'arrowdown':
-            handleButtonRelease(document.getElementById('backward-btn'));
-            break;
-        case 'a':
-        case 'arrowleft':
-            handleButtonRelease(document.getElementById('left-btn'));
-            break;
-        case 'd':
-        case 'arrowright':
-            handleButtonRelease(document.getElementById('right-btn'));
-            break;
-    }
+    const id = keyMap[e.key.toLowerCase()];
+    if (id) handleButtonRelease(document.getElementById(id));
 });
 
-// Initialize - set stop button as active
+// ── Servo controls ────────────────────────────────────────────────────────────
+
 document.addEventListener('DOMContentLoaded', () => {
-    const stopBtn = document.getElementById('stop-btn');
-    stopBtn.classList.add('active');
-    
-    console.log('Dashboard initialized');
-    
-    // Initialize servo controls
-    initServoControls();
+    document.getElementById('stop-btn').classList.add('active');
+
+    document.querySelectorAll('.servo-slider-compact').forEach(slider => {
+        slider.addEventListener('input', (e) => {
+            const id    = e.target.dataset.servo;
+            const angle = parseInt(e.target.value);
+            document.getElementById(`servo${id}-value`).textContent = `${angle}°`;
+            fetch('/servo_control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ servo_id: id, angle })
+            }).catch(console.error);
+        });
+    });
+
+    document.getElementById('servo-reset').addEventListener('click', () => {
+        document.querySelectorAll('.servo-slider-compact').forEach(s => {
+            s.value = 90;
+            document.getElementById(`servo${s.dataset.servo}-value`).textContent = '90°';
+            fetch('/servo_control', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ servo_id: s.dataset.servo, angle: 90 })
+            }).catch(console.error);
+        });
+    });
 });
-
-// Servo Control Functions
-function initServoControls() {
-    const servoSliders = document.querySelectorAll('.servo-slider-compact');
-    const resetButton = document.getElementById('servo-reset');
-    
-    // Add event listeners to each slider
-    servoSliders.forEach(slider => {
-        slider.addEventListener('input', handleServoChange);
-    });
-    
-    // Reset button handler
-    resetButton.addEventListener('click', resetAllServos);
-}
-
-function handleServoChange(e) {
-    const slider = e.target;
-    const servoId = slider.dataset.servo;
-    const angle = parseInt(slider.value);
-    
-    // Update display value
-    const valueDisplay = document.getElementById(`servo${servoId}-value`);
-    valueDisplay.textContent = `${angle}°`;
-    
-    // Add visual feedback
-    valueDisplay.style.color = '#10b981';
-    setTimeout(() => {
-        valueDisplay.style.color = '#10b981';
-    }, 200);
-    
-    // Send to server
-    sendServoCommand(servoId, angle);
-}
-
-function sendServoCommand(servoId, angle) {
-    fetch('/servo_control', {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            servo_id: servoId,
-            angle: angle
-        })
-    })
-    .then(response => response.json())
-    .then(data => {
-        console.log(`Servo ${servoId} set to ${angle}°:`, data);
-    })
-    .catch(error => {
-        console.error('Error setting servo:', error);
-    });
-}
-
-function resetAllServos() {
-    const servoSliders = document.querySelectorAll('.servo-slider-compact');
-    
-    servoSliders.forEach(slider => {
-        slider.value = 90;
-        const servoId = slider.dataset.servo;
-        const valueDisplay = document.getElementById(`servo${servoId}-value`);
-        valueDisplay.textContent = '90°';
-        
-        // Send reset command
-        sendServoCommand(servoId, 90);
-    });
-    
-    // Visual feedback on reset button
-    const resetBtn = document.getElementById('servo-reset');
-    resetBtn.style.transform = 'rotate(360deg)';
-    setTimeout(() => {
-        resetBtn.style.transform = 'rotate(0deg)';
-    }, 500);
-}
